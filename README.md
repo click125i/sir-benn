@@ -1,128 +1,142 @@
-# Room Booking Management System
+# Esmiringhoy Hotel – Room Reservation Management System
 
-**DSA 214 - Programming for Data Science | Final Laboratory Activity**
-Isabela State University, College of Computing Studies, ICT
-Assigned scenario: **12. Room Booking Management**
+A desktop room reservation system for **Esmiringhoy Hotel**, built with **Python**, **Tkinter** (GUI) and **SQLite** (database).
+Guests can check room availability, make a reservation, get a printable receipt, look up or cancel a booking by reference number, and the hotel can view an analytics report of all saved reservations.
 
-A command-line application that manages rooms, guests, and reservations
-(check-in/check-out dates and payment statuses) in a SQLite database, and
-produces summaries and charts from the stored records.
+> DSA 214 (Programming for Data Science) – Final Laboratory Activity, Scenario 12: **Room Booking Management**
 
-## Group
+---
 
-| Member | Primary responsibility |
-| --- | --- |
-| Member 1: _name_ | Database design, table relationships, SQL/CRUD (`database.py`) |
-| Member 2: _name_ | Functions, validation, control structures, menus (`functions.py`, `main.py`) |
-| Member 3: _name_ | Data analysis and charts (`analytics.py`) |
-| Member 4: _name_ | Testing, GitHub, README, documentation (`tests/`, `README.md`) |
+## Group Members
 
-## Requirements
+| # | Name |
+|---|------|
+| 1 | Reagan Recto |
+| 2 | Elaiza Aquino |
+| 3 | John Rainier Varilla |
+| 4 | John Ace Donato |
 
-- Python 3.8 or newer
-- `sqlite3` (included with Python)
-- `matplotlib` (only needed for charts)
-
-## Setup and run
-
-```bash
-git clone <your-repository-url>
-cd room-booking-system
-pip install -r requirements.txt
-python main.py
-```
-
-The database file (`database/room_booking.db`) is created automatically on the
-first run, and records are kept between runs.
-
-To try the program with example data, choose **5. Load simulated sample data**
-from the main menu. Sample records are invented for testing and demos. They are
-marked with `*` in lists and noted on charts and the report, and must never be
-presented as real observations.
+---
 
 ## Features
 
-| Menu | What you can do |
-| --- | --- |
-| Rooms | Add, view, search, update, delete rooms |
-| Guests | Add, view, search, update, delete guests |
-| Reservations | Create a booking (double-booking is blocked), view, search by guest / room / date / payment / status, check availability, change dates, record payments, check in / check out / cancel, delete |
-| Analytics and charts | Summary report (5 measures), occupancy for any period, 3 charts saved to `charts/` |
+- **Room selection** – 4 room types with live availability for the chosen dates (shows rooms left or `FULL`).
+- **Reservation flow** – Room & dates → Guest information & payment → Confirmation → Receipt.
+- **Automatic pricing** – room rate, extra-guest fee, length-of-stay discount and 12% VAT computed for you.
+- **Input validation** – dates, time, nights, guests, name, contact number, payment method and special requests are all checked with clear error messages.
+- **Double-booking protection** – availability is re-checked right before a reservation is saved.
+- **Receipts** – every reservation gets a unique reference number (`ESM-XXXXXX`) and a `.txt` receipt saved in the `receipts/` folder (can also be saved elsewhere with *Save Receipt As...*).
+- **Find / Cancel booking** – look up a reservation by reference number and cancel it (past stays cannot be cancelled).
+- **Analytics report** – totals, revenue by room type, payment methods, occupancy, reservations per month and top guests.
 
-Deleting a room, guest, or reservation always asks for confirmation. A room or
-guest that still has reservations cannot be deleted.
+---
 
-## Analytical measures
+## Rooms and Rates
 
-1. Occupancy rate per room and overall, for a chosen period
-2. Revenue per month: billed, collected, and outstanding
-3. Average length of stay
-4. Most-booked rooms
-5. Outstanding balances per guest
+| Room | Rate / night | Guests included | Max guests | Rooms available |
+|------|-------------:|:---------------:|:----------:|:---------------:|
+| Masters bedroom | PHP 8,500 | 4 | 6 | 3 |
+| Class A | PHP 5,500 | 3 | 4 | 5 |
+| Class B | PHP 3,500 | 2 | 3 | 8 |
+| Regular | PHP 2,000 | 2 | 2 | 10 |
 
-## Charts
+### How the price is computed
 
-| File | Shows |
-| --- | --- |
-| `charts/monthly_revenue.png` | Collected vs outstanding money for each month |
-| `charts/bookings_by_room_type.png` | Number of reservations per room type |
-| `charts/payment_status.png` | Share of reservations that are Paid, Partial, or Unpaid |
+1. **Base** = room rate × number of nights
+2. **Extra guests** = PHP 500 × guests beyond the included number × nights
+3. **Discount** on the subtotal: **5%** for 3–4 nights, **10%** for 5 or more nights
+4. **VAT** = 12% of the discounted subtotal
+5. **Total** = discounted subtotal + VAT
 
-## Database design
+*Example:* Class B, 4 nights, 3 guests → base 14,000 + extra guest 2,000 = 16,000 → 5% discount (−800) = 15,200 → VAT 1,824 → **Total PHP 17,024.00**
+
+### Booking rules
+
+- Check-in date cannot be in the past and can be at most **365 days** ahead
+- Stay is **1 to 30 nights**
+- Number of guests cannot go over the room's maximum
+- Contact number format: `09XXXXXXXXX` or `+639XXXXXXXXX`
+- Payment method: `ONLINE`, `CASH` or `BANKING`
+- Special requests: optional, up to 80 characters
+
+---
+
+## Project Structure
 
 ```
-rooms (room_id PK, room_number UNIQUE, room_type, capacity, rate_per_night, is_simulated)
-guests (guest_id PK, full_name, contact_number, is_simulated)
-reservations (reservation_id PK, room_id FK -> rooms, guest_id FK -> guests,
-              check_in, check_out, total_cost, amount_paid,
-              payment_status, booking_status, is_simulated)
+.
+├── mainsirbenn.py   # Main program – the Tkinter windows/screens
+├── database.py      # Hotel settings + ALL the SQLite code
+├── functions.py     # Input checking, prices, availability, references, receipts
+├── analytics.py     # Summary numbers and the analytics report
+├── hotel.db         # SQLite database (rooms and bookings tables)
+├── hotelbg.jpg      # Optional background image
+└── receipts/        # Auto-generated .txt receipts
 ```
 
-One room has many reservations and one guest has many reservations. Foreign
-keys are enforced, and CHECK constraints keep statuses and amounts valid.
-All SQL that uses user input is parameterized.
+Each file has its own job:
 
-## Project structure
+| File | What it does |
+|------|--------------|
+| `mainsirbenn.py` | Draws the screens (booking, guest info, receipt, analytics) and connects the buttons to the other files. |
+| `database.py` | Stores the hotel settings (rooms, VAT, limits) and is the only file that talks to SQLite. |
+| `functions.py` | Business logic with no windows and no SQL: validation, pricing, availability, reference numbers and receipt text. |
+| `analytics.py` | SQL summaries and the text report shown on the Analytics screen. |
 
-```
-main.py          menu and program flow
-database.py      connection, tables, all SQL operations, sample data
-functions.py     validation, date/cost calculations, availability checks, tables
-analytics.py     measures, summary report, charts
-tests/           test_cases.md (manual test sheet), test_core.py (automated checks)
-charts/          generated chart images
-database/        SQLite database file (created on first run)
-documentation/   final PDF
-```
+### Database
 
-## Rules and assumptions
+`hotel.db` has two tables:
 
-- A stay occupies the nights from check-in up to (not including) check-out, so a
-  guest may arrive on the day another guest leaves.
-- Dates use the format `YYYY-MM-DD`. Check-out must be after check-in.
-- Total cost = nights x the room's rate at the time of booking. Changing a
-  room's rate later does not change existing reservations.
-- Payment status is calculated: Unpaid (nothing paid), Partial, or Paid.
-- Booking status changes follow: Booked -> Checked-in or Cancelled;
-  Checked-in -> Checked-out. Checked-out and Cancelled are final.
-- Cancelled reservations are left out of availability checks and analytics.
-- Monthly revenue is grouped by the month of the check-in date.
-- Currency is Philippine pesos (PHP). Guest contact numbers are optional.
+- **`rooms`** – `room_type` (primary key), `rate`, `included`, `max_guests`, `total`, `specs`
+- **`bookings`** – `ref` (primary key), `room` (foreign key to `rooms`), `checkin`, `checkout`, `time`, `nights`, `guests`, `name`, `contact`, `payment`, `requests`, `total`, `created`
 
-## Testing
+The tables are created automatically the first time the program runs. If an old `bookings.json` file exists, its reservations are imported into the database once.
 
-Automated checks (they use a temporary database, not your real data):
+---
+
+## Requirements
+
+- **Python 3.8 or newer**
+- **Tkinter** (included with the standard Python installer; on some Linux systems install it with `sudo apt install python3-tk`)
+- **Pillow** *(optional)* – only needed for the background image. Without it, a blue gradient is used.
 
 ```bash
-python -m unittest discover -s tests -v
+pip install pillow
 ```
 
-Manual test cases and results are recorded in `tests/test_cases.md`.
+---
 
-## References and AI disclosure
+## How to Run
 
-- Python `sqlite3` documentation: https://docs.python.org/3/library/sqlite3.html
-- Matplotlib documentation: https://matplotlib.org/stable/
+1. Put all the files in the **same folder**.
+2. Open a terminal in that folder and run:
 
-AI assistance: _describe how AI was used, according to your instructor's
-directions and university policy._
+```bash
+python mainsirbenn.py
+```
+
+Other files can also be run by themselves:
+
+```bash
+python database.py    # create the database (and import old bookings.json if present)
+python analytics.py   # print the analytics report in the terminal
+```
+
+---
+
+## How to Use
+
+1. **Choose a room** – pick the room type, check-in date (`MONTH/DAY/YEAR`, e.g. `12/25/2026`), check-in time (e.g. `2:00PM`), number of nights and number of guests. Press **Check Availability** to see how many rooms are left, then **Next**.
+2. **Enter guest details** – full name, contact number, payment method and any special requests, then press **Confirm Reservation**.
+3. **Get your receipt** – note the reference number. The receipt is saved automatically in `receipts/`.
+4. **Find / Cancel Booking** – enter your reference number (e.g. `ESM-AB12CD`) to view or cancel a reservation.
+5. **Analytics** – open the Analytics screen to see the hotel report.
+
+---
+
+## Tech Stack
+
+- Python 3
+- Tkinter (GUI)
+- SQLite3 (database)
+- Pillow (optional, background image)
