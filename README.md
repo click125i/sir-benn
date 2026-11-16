@@ -1,4 +1,4 @@
-# Esmiringhoy Hotel – Room Reservation Management System
+# Casa de Esmi Hotel – Room Reservation Management System
 
 A desktop room reservation system for **Esmiringhoy Hotel**, built with **Python**, **Tkinter** (GUI) and **SQLite** (database).
 Guests can check room availability, make a reservation, get a printable receipt, look up or cancel a booking by reference number, and the hotel can view an analytics report of all saved reservations.
