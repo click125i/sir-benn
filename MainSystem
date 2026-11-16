@@ -5,16 +5,18 @@ Put "hotelbg.jpg" in the same folder as this file (optional - a gradient
 background is used if the image or Pillow is missing).
 
 Files created next to this script:
-    bookings.json   -> all saved reservations
+    hotel.db        -> SQLite database with all saved reservations
     receipts/       -> one .txt receipt per reservation
+
+Other files of the project (keep them in the same folder):
+    database.py     -> settings + all the SQLite code
+    functions.py    -> input checking, prices, availability, receipts
+    analytics.py    -> summary numbers and the analytics report
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 import os
-import re
-import json
-import random
-import string
+import sqlite3
 from datetime import datetime, date, timedelta
 
 try:
@@ -23,203 +25,19 @@ try:
 except ImportError:
     PIL_OK = False
 
+from database import (HOTEL_NAME, MAX_NIGHTS, MAX_DAYS_AHEAD, PAYMENT_METHODS,
+                      ROOMS, ROOM_NAMES, init_db, import_json,
+                      add_booking, get_booking, delete_booking)
+from functions import (parse_date, parse_time, parse_int, check_name, check_contact,
+                       check_payment, check_requests, rooms_left, compute_price,
+                       make_record, peso, build_receipt)
+from analytics import analytics_report
+
 # ----------------------------------------------------------------------------
 # Data / settings
 # ----------------------------------------------------------------------------
 FOLDER = os.path.dirname(os.path.abspath(__file__))
-BOOKINGS_FILE = os.path.join(FOLDER, "bookings.json")
 RECEIPT_DIR = os.path.join(FOLDER, "receipts")
-
-HOTEL_NAME = "Esmiringhoy Hotel"
-VAT_RATE = 0.12
-EXTRA_GUEST_FEE = 500          # per extra guest, per night (beyond included guests)
-MAX_NIGHTS = 30
-MAX_DAYS_AHEAD = 365
-PAYMENT_METHODS = ["ONLINE", "CASH", "BANKING"]
-
-ROOMS = {
-    "Masters bedroom": {
-        "rate": 8500, "included": 4, "max": 6, "total": 3,
-        "specs": "65 sqm | 2 King beds | Living area | Jacuzzi | Balcony | Smart TV | Free Wi-Fi",
-    },
-    "Class A": {
-        "rate": 5500, "included": 3, "max": 4, "total": 5,
-        "specs": "42 sqm | 1 King + 1 Single bed | Air-con | Smart TV | Mini fridge | Free Wi-Fi",
-    },
-    "Class B": {
-        "rate": 3500, "included": 2, "max": 3, "total": 8,
-        "specs": "30 sqm | 1 Queen bed | Air-con | Cable TV | Private bathroom | Free Wi-Fi",
-    },
-    "Regular": {
-        "rate": 2000, "included": 2, "max": 2, "total": 10,
-        "specs": "22 sqm | 1 Double bed | Electric fan | Cable TV | Private bathroom",
-    },
-}
-ROOM_NAMES = list(ROOMS.keys())
-
-# ----------------------------------------------------------------------------
-# Storage helpers
-# ----------------------------------------------------------------------------
-def load_bookings():
-    if not os.path.exists(BOOKINGS_FILE):
-        return []
-    try:
-        with open(BOOKINGS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, list):
-            raise ValueError("bookings file is not a list")
-        return data
-    except (json.JSONDecodeError, ValueError, OSError):
-        # Keep the unreadable file as a backup and start fresh
-        try:
-            os.replace(BOOKINGS_FILE, BOOKINGS_FILE + ".bak")
-        except OSError:
-            pass
-        messagebox.showwarning(
-            "Bookings file problem",
-            "The bookings file could not be read. A backup (.bak) was kept "
-            "and a new empty list was started.")
-        return []
-
-
-def save_bookings():
-    try:
-        with open(BOOKINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(bookings, f, indent=2)
-        return True
-    except OSError as e:
-        messagebox.showerror("Save error", f"Could not save the reservation:\n{e}")
-        return False
-
-
-bookings = []   # filled after the Tk root exists (messagebox needs a root)
-
-# ----------------------------------------------------------------------------
-# Business logic
-# ----------------------------------------------------------------------------
-def parse_date(s):
-    s = s.strip()
-    if not s:
-        raise ValueError("Date of reservation is required (MONTH/DAY/YEAR, e.g. 12/25/2026).")
-    try:
-        return datetime.strptime(s, "%m/%d/%Y").date()
-    except ValueError:
-        raise ValueError("Invalid date. Use MONTH/DAY/YEAR, e.g. 12/25/2026 (must be a real date).")
-
-
-def parse_time(s):
-    s = s.strip().upper().replace(" ", "")
-    if not s:
-        raise ValueError("Time of reservation is required (e.g. 7:00AM).")
-    for fmt in ("%I:%M%p", "%I%p"):
-        try:
-            return datetime.strptime(s, fmt).time()
-        except ValueError:
-            continue
-    raise ValueError("Invalid time. Use a format like 7:00AM or 2:30PM.")
-
-
-def parse_int(s, label, lo, hi):
-    s = s.strip()
-    if not s:
-        raise ValueError(f"{label} is required.")
-    if not s.isdigit():
-        raise ValueError(f"{label} must be a whole number.")
-    n = int(s)
-    if not lo <= n <= hi:
-        raise ValueError(f"{label} must be between {lo} and {hi}.")
-    return n
-
-
-def rooms_left(room, start, end, ignore_ref=None):
-    """How many rooms of this type are free for [start, end)."""
-    used = 0
-    for b in bookings:
-        if b["room"] != room or b["ref"] == ignore_ref:
-            continue
-        b_start = date.fromisoformat(b["checkin"])
-        b_end = date.fromisoformat(b["checkout"])
-        if b_start < end and start < b_end:
-            used += 1
-    return ROOMS[room]["total"] - used
-
-
-def compute_price(room, nights, guests):
-    r = ROOMS[room]
-    base = r["rate"] * nights
-    extra_guests = max(0, guests - r["included"])
-    extra = extra_guests * EXTRA_GUEST_FEE * nights
-    subtotal = base + extra
-    disc_pct = 0.10 if nights >= 5 else 0.05 if nights >= 3 else 0.0
-    discount = subtotal * disc_pct
-    taxable = subtotal - discount
-    vat = taxable * VAT_RATE
-    return {
-        "rate": r["rate"], "base": base, "extra_guests": extra_guests, "extra": extra,
-        "subtotal": subtotal, "disc_pct": disc_pct, "discount": discount,
-        "vat": vat, "total": taxable + vat,
-    }
-
-
-def new_reference():
-    existing = {b["ref"] for b in bookings}
-    while True:
-        ref = "ESM-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        if ref not in existing:
-            return ref
-
-
-def peso(x):
-    return f"PHP {x:,.2f}"
-
-
-def build_receipt(b):
-    p = compute_price(b["room"], b["nights"], b["guests"])
-    ci = date.fromisoformat(b["checkin"])
-    co = date.fromisoformat(b["checkout"])
-    w = 50
-    line = "=" * w
-    dash = "-" * w
-
-    def row(label, value):
-        return f"{label:<26}{value:>{w - 26}}"
-
-    out = [
-        line,
-        HOTEL_NAME.upper().center(w),
-        "OFFICIAL RESERVATION RECEIPT".center(w),
-        line,
-        f"Reference No : {b['ref']}",
-        f"Issued       : {b['created']}",
-        dash,
-        f"Guest        : {b['name']}",
-        f"Contact No.  : {b['contact']}",
-        f"Payment      : {b['payment']}",
-        dash,
-        f"Room         : {b['room']}",
-        f"Specs        : {ROOMS[b['room']]['specs'][:36]}",
-        f"Check-in     : {ci.strftime('%b %d, %Y')} at {b['time']}",
-        f"Check-out    : {co.strftime('%b %d, %Y')}",
-        f"Length of stay: {b['nights']} night(s)",
-        f"No. of guests: {b['guests']}",
-    ]
-    if b.get("requests"):
-        out.append(f"Requests     : {b['requests'][:36]}")
-    out.append(dash)
-    out.append(row(f"Room rate x {b['nights']} night(s)", peso(p["base"])))
-    if p["extra_guests"]:
-        out.append(row(f"Extra guest x{p['extra_guests']}", peso(p["extra"])))
-    if p["discount"]:
-        out.append(row(f"Discount ({int(p['disc_pct'] * 100)}%)", "-" + peso(p["discount"])))
-    out.append(row("VAT (12%)", peso(p["vat"])))
-    out.append(dash)
-    out.append(row("TOTAL AMOUNT DUE", peso(p["total"])))
-    out.append(line)
-    out.append("Thank you for choosing Esmiringhoy Hotel!".center(w))
-    out.append("Please present this receipt upon check-in.".center(w))
-    out.append(line)
-    return "\n".join(out)
-
 
 # ----------------------------------------------------------------------------
 # Window / canvas setup
@@ -240,7 +58,14 @@ def Y(v):
     return int(v * H / 1000)
 
 
-bookings.extend(load_bookings())
+try:
+    init_db()
+    moved = import_json()      # copies an old bookings.json into the database (once)
+except sqlite3.Error as e:
+    messagebox.showerror("Database problem", f"Could not open hotel.db:\n{e}")
+    raise SystemExit
+if moved:
+    messagebox.showinfo("Database", f"{moved} reservation(s) from bookings.json were moved to hotel.db.")
 
 bg = None
 if PIL_OK:
@@ -422,7 +247,8 @@ def screen_booking():
     button(CX - 300, 830, "Check Availability", check_avail, 18)
     button(CX, 830, "Next", go_next, 14)
     button(CX + 300, 830, "Find / Cancel Booking", manage_booking, 22)
-    text(CX, 900, "Tip: all fields are required. Prices shown are per room, per night.", 12,
+    button(CX, 885, "Analytics", screen_analytics, 14)
+    text(CX, 940, "Tip: all fields are required. Prices shown are per room, per night.", 12,
          color="#dddddd")
 
 
@@ -453,20 +279,10 @@ def screen_guest():
     req_e = entry(CX, 660, booking.get("requests", ""), 36)
 
     def collect():
-        name = " ".join(name_e.get().split())
-        if not re.fullmatch(r"[A-Za-z][A-Za-z .'\-]+", name):
-            raise ValueError("Please enter a valid full name (letters only, at least 2 characters).")
-        cp = re.sub(r"[\s\-]", "", cp_e.get())
-        if not cp:
-            raise ValueError("Contact number is required.")
-        if not re.fullmatch(r"(09\d{9}|\+639\d{9})", cp):
-            raise ValueError("Invalid contact number. Use 09XXXXXXXXX or +639XXXXXXXXX.")
-        pay = pay_cb.get()
-        if pay not in PAYMENT_METHODS:
-            raise ValueError("Please choose a payment method.")
-        req = req_e.get().strip()
-        if len(req) > 80:
-            raise ValueError("Special requests must be 80 characters or fewer.")
+        name = check_name(name_e.get())
+        cp = check_contact(cp_e.get())
+        pay = check_payment(pay_cb.get())
+        req = check_requests(req_e.get())
         return name, cp, pay, req
 
     def remember():
@@ -496,17 +312,11 @@ def screen_guest():
                 f"Reserve {booking['room']} for {booking['nights']} night(s)?\n"
                 f"Total: {peso(total)} ({pay})"):
             return
-        record = {
-            "ref": new_reference(), "room": booking["room"],
-            "checkin": booking["checkin"], "checkout": booking["checkout"],
-            "time": booking["time"], "nights": booking["nights"],
-            "guests": booking["guests"], "name": name, "contact": cp,
-            "payment": pay, "requests": req, "total": round(total, 2),
-            "created": datetime.now().strftime("%b %d, %Y %I:%M %p"),
-        }
-        bookings.append(record)
-        if not save_bookings():
-            bookings.pop()
+        record = make_record(booking, name, cp, pay, req)
+        try:
+            add_booking(record)
+        except sqlite3.Error as e:
+            messagebox.showerror("Save error", f"Could not save the reservation:\n{e}")
             return
         screen_receipt(record)
 
@@ -580,7 +390,7 @@ def manage_booking():
     if not ref:
         messagebox.showerror("Find booking", "Please enter a reference number.")
         return
-    rec = next((b for b in bookings if b["ref"] == ref), None)
+    rec = get_booking(ref)
     if not rec:
         messagebox.showinfo("Find booking", f"No reservation found for '{ref}'.")
         return
@@ -591,11 +401,30 @@ def manage_booking():
         messagebox.showinfo("Reservation details", info + "\n\n(Past stays cannot be cancelled.)")
         return
     if messagebox.askyesno("Reservation details", info + "\n\nCancel this reservation?"):
-        bookings.remove(rec)
-        if save_bookings():
+        try:
+            delete_booking(ref)
             messagebox.showinfo("Cancelled", "The reservation has been cancelled.")
-        else:
-            bookings.append(rec)
+        except sqlite3.Error as e:
+            messagebox.showerror("Save error", f"Could not cancel the reservation:\n{e}")
+
+
+# ----------------------------------------------------------------------------
+# Extra: analytics screen
+# ----------------------------------------------------------------------------
+def screen_analytics():
+    clear()
+    text(CX, 55, "Hotel Analytics", 28)
+    panel(CX - 420, 100, CX + 420, 800)
+    lines = max(12, int(700 * H / 1000 / 17))     # how many text lines fit in the panel
+    box = tk.Text(window, font=("Courier New", 10), width=62, height=lines,
+                  bg="#101820", fg="white", relief="flat", wrap="none")
+    try:
+        box.insert("1.0", analytics_report())
+    except (sqlite3.Error, ValueError) as e:
+        box.insert("1.0", f"Could not build the report:\n{e}")
+    box.config(state="disabled")      # read-only (mouse wheel still scrolls)
+    place(CX, 450, box)
+    button(CX, 850, "Back", screen_booking, 14)
 
 
 # ----------------------------------------------------------------------------
